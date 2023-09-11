@@ -46,9 +46,9 @@ fn main() -> ! {
                 err_count = 0;
                 // We consider distances in in 10 buckets of 5cm ranges out to 50cm
                 // Past 50cm we shut we treat as too far
-                let distance = distance.as_u16().min(50);
+                let distance = distance.as_u16().min(20);
                 // Further distances should reduce the brightness
-                distance_bucket = 10 - u8::try_from(distance / 5).unwrap();
+                distance_bucket = 10 - u8::try_from(distance / 2).unwrap();
             }
             Err(_) => err_count = (err_count + 1).min(4),
         }
