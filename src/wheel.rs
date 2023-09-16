@@ -43,6 +43,7 @@ where
         self.in2.set_low();
     }
 
+    #[allow(dead_code)]
     pub fn reverse(&mut self) {
         self.in1.set_low();
         self.in2.set_high();
