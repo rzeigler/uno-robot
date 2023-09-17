@@ -12,13 +12,41 @@ use arduino_hal::hal::wdt;
 use arduino_hal::prelude::*;
 use arduino_hal::simple_pwm::*;
 
-use sonic::{EchoError, EchoLocator, CM};
+use sonic::{configure_timer, EchoError, EchoLocator, CM};
 use wheel::WheelControl;
 
 enum Throttle {
     Stop,
     Slow,
     Fast,
+}
+
+fn collision_avoid(readings: &[Result<CM, EchoError>], throttle: Throttle) -> Throttle {
+    let mut valid = 0u16;
+    let mut sum = 0u16;
+    for reading in readings {
+        if let Ok(cm) = reading {
+            sum += cm.as_u16();
+            valid += 1;
+        }
+    }
+    if valid > u16::try_from(readings.len()).unwrap() / 2 {
+        let average = sum / valid;
+        if average < 15 {
+            Throttle::Stop
+        } else if average < 40 {
+            // Disallow Fast
+            match throttle {
+                Throttle::Fast => Throttle::Slow,
+                t => t,
+            }
+        } else {
+            throttle
+        }
+    } else {
+        // Assume if we arne't getting clear reading from the front then we are fine to continue
+        throttle
+    }
 }
 
 fn decide_throttle(readings: &[Result<CM, EchoError>]) -> Option<Throttle> {
@@ -51,10 +79,16 @@ fn main() -> ! {
 
     let mut signal = pins.d13.into_output();
 
-    let mut locator = EchoLocator::new(
-        dp.TC1,
-        pins.d10.into_output(),
-        pins.d11.into_floating_input().forget_imode(),
+    let mut timer1 = dp.TC1;
+    configure_timer(&mut timer1);
+
+    let mut chase_dist = EchoLocator::new(
+        pins.d9.into_output(),
+        pins.d10.into_floating_input().forget_imode(),
+    );
+    let mut bow_dist = EchoLocator::new(
+        pins.d11.into_output(),
+        pins.d12.into_floating_input().forget_imode(),
     );
 
     let timer0 = Timer0Pwm::new(dp.TC0, Prescaler::Prescale64);
@@ -82,8 +116,11 @@ fn main() -> ! {
     watchdog.start(wdt::Timeout::Ms8000).unwrap();
 
     loop {
-        locator.multi_pulse_distance_cm(&mut readings);
+        chase_dist.multi_pulse_distance_cm(&mut timer1, &mut readings);
         if let Some(throttle) = decide_throttle(&readings) {
+            // We have a throttle, perform a check ahead to ensure that we don't need to halt
+            bow_dist.multi_pulse_distance_cm(&mut timer1, &mut readings);
+            let throttle = collision_avoid(&readings, throttle);
             signal.set_low();
             let duty = match throttle {
                 Throttle::Stop => 0,
